@@ -1,0 +1,57 @@
+# Стенд лабораторной: JFrog Container Registry — бесплатная версия
+# Artifactory с поддержкой docker-репозиториев.
+# ВАЖНО: artifactory-oss из artifactory-lab docker-репозитории
+# НЕ поддерживает (только generic/maven) — поэтому здесь JCR.
+# JCR требует PostgreSQL (встроенная Derby запрещена) — поднимаем рядом.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: artifactory-postgres
+    environment:
+      POSTGRES_USER: artifactory
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: artifactory
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artifactory -d artifactory"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-jcr:latest
+    container_name: artifactory
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JF_JFCONNECT_ENABLED: "false"   # без этого UI может не открываться
+      JF_SHARED_DATABASE_TYPE: postgresql
+      JF_SHARED_DATABASE_DRIVER: org.postgresql.Driver
+      JF_SHARED_DATABASE_URL: jdbc:postgresql://postgres:5432/artifactory
+      JF_SHARED_DATABASE_USERNAME: artifactory
+      JF_SHARED_DATABASE_PASSWORD: password
+    ports:
+      - "8081:8081"   # Artifactory API и docker-репозитории (path-метод)
+      - "8082:8082"   # веб-интерфейс (router)
+    volumes:
+      - artifactory_data:/var/opt/jfrog/artifactory
+      # Ключ кластера: без него JCR падает при первом запуске
+      # (Missing MasterKey). Сгенерирован заранее (openssl rand -hex 32),
+      # только для лабораторного стенда!
+      # join.key НЕ монтируем: access-сервис генерирует и перезаписывает
+      # его сам; примонтированный файл он перезаписать не сможет
+      # (AccessDeniedException).
+      - ./jcr-keys/master.key:/opt/jfrog/artifactory/var/etc/security/master.key
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/router/api/v1/system/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+
+volumes:
+  artifactory_data:
+  postgres_data:
